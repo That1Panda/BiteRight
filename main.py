@@ -6,6 +6,7 @@ from tqdm import tqdm
 from sqlalchemy import create_engine, Column, Integer, String, Float, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
+import re
 
 # SQLAlchemy Setup
 Base = declarative_base()
@@ -60,7 +61,7 @@ except requests.exceptions.RequestException as e:
 
 # Predefined foods
 foods = result.keys()
-cols = ['vitamins', 'minerals', 'amino']
+cols = ['vitamins', 'minerals', 'amino', 'calories']
 data = {}
 elements = {}
 
@@ -120,6 +121,50 @@ def generate_food_dataframe(user_id):
     sorted_cols = elements['vitamins'] + elements['minerals'] + elements['amino']
     df = df[sorted_cols]
     return df
+
+def get_nutrient_values(user_id):
+    user_foods = db_session.query(UserFood).filter_by(user_id=user_id).all()
+    selected_foods = {food.food_name: food.amount for food in user_foods}
+    if not selected_foods:
+        return pd.DataFrame()  # Return an empty DataFrame if no foods
+    for food, amount in tqdm(selected_foods.items()):
+        temp_data = {food: {}}
+        col=cols[-1]
+        try:
+            new_url = result[food] + "/" + col
+            response = requests.get(new_url)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            meta_description = soup.find("meta", {"name": "description"})
+            if meta_description:
+                content = meta_description.get("content", "").strip()
+                
+                # Use regular expressions to extract the nutritional values
+                calories = re.search(r"(\d+)\s+calories", content)
+                carbs = re.search(r"([\d.]+)\s+grams\s+of\s+carbohydrate", content)
+                protein = re.search(r"([\d.]+)\s+grams\s+of\s+protein", content)
+                fats = re.search(r"([\d.]+)\s+grams\s+of\s+fat", content)
+
+                # Extracted values with their amounts
+                extracted_data = {
+                    "Calories": (int(calories.group(1)) if calories else 0) * (amount / 100),
+                    "Carbohydrates": (float(carbs.group(1)) if carbs else 0) * (amount / 100),
+                    "Protein": (float(protein.group(1)) if protein else 0) * (amount / 100),
+                    "Fats": (float(fats.group(1)) if fats else 0) * (amount / 100),
+                }
+            else:
+                extracted_data = {}
+            
+            temp_data[food] = extracted_data
+            data.update(temp_data)                
+        except Exception as e:
+            st.warning(f"Error processing {food} for {col}: {e}")
+        
+    df=pd.DataFrame(data).T
+    df.loc['Total']=df.sum(axis=0)
+    return df
+
 
 # Main Streamlit App
 def main():
@@ -186,11 +231,13 @@ def main():
             df = generate_food_dataframe(user_id)
             st.dataframe(df)
 
-            # Summed nutrients with filter
             if not df.empty:
+                
+                # Summed nutrients with filter
                 st.subheader("Summed Nutrient Values (Sorted)")
                 summed_df = df.sum(axis=0).sort_values(ascending=True).to_frame(name="Total").reset_index()
                 summed_df.columns = ["Nutrient", "Total"]
+            
 
                 # Dropdown menu for nutrients
                 available_nutrients = summed_df['Nutrient'].tolist()
@@ -210,6 +257,12 @@ def main():
                 st.dataframe(eaa_df)
 
                 st.write(f"**Total EAA Sum**: {total_eaas}")
+
+            # Display the summarized table from get_nutrient_values
+
+                st.subheader("Caloric and Macronutrient Breakdown")
+                nutrient_values_df = get_nutrient_values(user_id)
+                st.dataframe(nutrient_values_df)
 
 
 
