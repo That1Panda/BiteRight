@@ -120,13 +120,7 @@ def generate_food_dataframe(user_id):
                 df.loc[food, element] = 0
     sorted_cols = elements['vitamins'] + elements['minerals'] + elements['amino']
     df = df[sorted_cols]
-    return df
-
-def get_nutrient_values(user_id):
-    user_foods = db_session.query(UserFood).filter_by(user_id=user_id).all()
-    selected_foods = {food.food_name: food.amount for food in user_foods}
-    if not selected_foods:
-        return pd.DataFrame()  # Return an empty DataFrame if no foods
+    
     for food, amount in tqdm(selected_foods.items()):
         temp_data = {food: {}}
         col=cols[-1]
@@ -152,6 +146,7 @@ def get_nutrient_values(user_id):
                     "Carbohydrates": (float(carbs.group(1)) if carbs else 0) * (amount / 100),
                     "Protein": (float(protein.group(1)) if protein else 0) * (amount / 100),
                     "Fats": (float(fats.group(1)) if fats else 0) * (amount / 100),
+                    "Amount (gm)": amount,
                 }
             else:
                 extracted_data = {}
@@ -161,9 +156,10 @@ def get_nutrient_values(user_id):
         except Exception as e:
             st.warning(f"Error processing {food} for {col}: {e}")
         
-    df=pd.DataFrame(data).T
-    df.loc['Total']=df.sum(axis=0)
-    return df
+    df2=pd.DataFrame(data).T
+    df2.loc['Total']=df2.sum(axis=0)
+    
+    return df, df2
 
 
 # Main Streamlit App
@@ -228,17 +224,20 @@ def main():
 
             # Display user food DataFrame
             st.subheader("Your Nutrition Data")
-            df = generate_food_dataframe(user_id)
+            df,df2 = generate_food_dataframe(user_id)
             st.dataframe(df)
 
             if not df.empty:
+                # Display the summarized table from get_nutrient_values
+
+                st.subheader("Caloric and Macronutrient Breakdown")
+                st.dataframe(df2)
                 
                 # Summed nutrients with filter
                 st.subheader("Summed Nutrient Values (Sorted)")
                 summed_df = df.sum(axis=0).sort_values(ascending=True).to_frame(name="Total").reset_index()
                 summed_df.columns = ["Nutrient", "Total"]
             
-
                 # Dropdown menu for nutrients
                 available_nutrients = summed_df['Nutrient'].tolist()
                 selected_nutrients = st.multiselect("Select Nutrients to not Display", available_nutrients)
@@ -258,11 +257,6 @@ def main():
 
                 st.write(f"**Total EAA Sum**: {total_eaas}")
 
-            # Display the summarized table from get_nutrient_values
-
-                st.subheader("Caloric and Macronutrient Breakdown")
-                nutrient_values_df = get_nutrient_values(user_id)
-                st.dataframe(nutrient_values_df)
 
 
 
